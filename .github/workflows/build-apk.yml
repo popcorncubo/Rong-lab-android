@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -19,27 +19,24 @@ jobs:
 
           files = glob.glob("*.zip")
           if len(files) != 1:
-              raise SystemExit(
-                  "Expected exactly one ZIP in repository root"
-              )
+              raise SystemExit("Expected exactly one ZIP")
 
           with zipfile.ZipFile(files[0]) as z:
               z.extractall("extracted")
 
           roots = [
-              x for x in os.listdir("extracted")
-              if os.path.isdir("extracted/" + x)
+              os.path.join("extracted", x)
+              for x in os.listdir("extracted")
+              if os.path.isfile(
+                  os.path.join("extracted", x, "package.json")
+              )
           ]
 
           if len(roots) != 1:
-              raise SystemExit("Unexpected ZIP structure")
+              raise SystemExit("Cannot find project root")
 
-          root = os.path.join("extracted", roots[0])
-          for name in os.listdir(root):
-              os.rename(
-                  os.path.join(root, name),
-                  os.path.join(".", name)
-              )
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("PROJECT_DIR=" + roots[0] + "\n")
           PY
 
       - name: Setup Node.js
@@ -58,15 +55,17 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: ${{ env.PROJECT_DIR }}
 
       - name: Create Android project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npx cap add android
           npx cap sync android
 
       - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
-          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
@@ -74,5 +73,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RONG-LAB-Android-Debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
