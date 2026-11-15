@@ -74,8 +74,8 @@ jobs:
           import re
           p = Path('android/app/build.gradle')
           s = p.read_text()
-          s, count_code = re.subn(r'versionCode\s+\d+', 'versionCode 4', s, count=1)
-          s, count_name = re.subn(r'versionName\s+"[^"]+"', 'versionName "1.0.3"', s, count=1)
+          s, count_code = re.subn(r'versionCode\s+\d+', 'versionCode 5', s, count=1)
+          s, count_name = re.subn(r'versionName\s+"[^"]+"', 'versionName "1.0.4"', s, count=1)
           if count_code != 1 or count_name != 1:
               raise SystemExit('Cannot set Android version safely')
           p.write_text(s)
@@ -86,6 +86,30 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
+
+      - name: Sign APK with the fixed testing key
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        env:
+          RONG_KEYSTORE_BASE64: ${{ secrets.RONG_KEYSTORE_BASE64 }}
+          RONG_KEYSTORE_PASSWORD: ${{ secrets.RONG_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          set -eu
+          if [ -z "$RONG_KEYSTORE_BASE64" ] || [ -z "$RONG_KEYSTORE_PASSWORD" ]; then
+            echo "Missing RONG_KEYSTORE_BASE64 or RONG_KEYSTORE_PASSWORD secret."
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/rong-signing-key.jks"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$RONG_KEYSTORE_BASE64" | base64 --decode > "$KEY_FILE"
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" sign \
+            --ks "$KEY_FILE" --ks-key-alias ronglab \
+            --ks-pass env:RONG_KEYSTORE_PASSWORD \
+            --key-pass env:RONG_KEYSTORE_PASSWORD \
+            --out "$RUNNER_TEMP/rong-signed.apk" "$APK"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose "$RUNNER_TEMP/rong-signed.apk"
+          mv "$RUNNER_TEMP/rong-signed.apk" "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
