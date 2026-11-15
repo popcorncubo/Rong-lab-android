@@ -1,0 +1,95 @@
+name: Build RONG LAB APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract uploaded ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, zipfile, os
+
+          files = glob.glob("*.zip")
+          if len(files) != 1:
+              raise SystemExit("Expected exactly one ZIP")
+
+          with zipfile.ZipFile(files[0]) as z:
+              z.extractall("extracted")
+
+          roots = [
+              os.path.join("extracted", x)
+              for x in os.listdir("extracted")
+              if os.path.isfile(
+                  os.path.join("extracted", x, "package.json")
+              )
+          ]
+
+          if len(roots) != 1:
+              raise SystemExit("Cannot find project root")
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write("PROJECT_DIR=" + roots[0] + "\n")
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Create Android project
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npx cap add android
+          npx cap sync android
+          python3 - <<'PY_VERSION'
+          from pathlib import Path
+          import re
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
+          s, count_code = re.subn(r'versionCode\s+\d+', 'versionCode 3', s, count=1)
+          s, count_name = re.subn(r'versionName\s+"[^"]+"', 'versionName "1.0.2"', s, count=1)
+          if count_code != 1 or count_name != 1:
+              raise SystemExit('Cannot set Android version safely')
+          p.write_text(s)
+          PY_VERSION
+
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RONG-LAB-Android-Debug
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
